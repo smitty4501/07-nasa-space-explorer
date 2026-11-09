@@ -12,7 +12,7 @@ const modalDate = document.getElementById('modalDate');
 const modalTitle = document.getElementById('modalTitle');
 const modalExplanation = document.getElementById('modalExplanation');
 
-const apiUrl = 'https://api.nasa.gov/planetary/apod';
+const apiUrl = 'https://science.nasa.gov/wp-json/wp/v2/apod-basic';
 const apiKey = 'DEMO_KEY';
 const millisecondsPerDay = 24 * 60 * 60 * 1000;
 const spaceFacts = [
@@ -27,6 +27,8 @@ const spaceFacts = [
 setupDateInputs(startInput, endInput);
 
 const latestEndDate = new Date(`${endInput.max}T00:00:00Z`);
+latestEndDate.setUTCDate(latestEndDate.getUTCDate() - 1);
+endInput.max = latestEndDate.toISOString().slice(0, 10);
 const latestStartDate = new Date(latestEndDate);
 latestStartDate.setUTCDate(latestStartDate.getUTCDate() - 8);
 startInput.max = latestStartDate.toISOString().slice(0, 10);
@@ -84,6 +86,10 @@ function formatDate(date) {
 	});
 }
 
+function getPlainText(html) {
+	return new DOMParser().parseFromString(html || '', 'text/html').body.textContent.trim();
+}
+
 function updateGalleryStatus(message, state = '') {
 	galleryStatus.textContent = message;
 	galleryStatus.className = `gallery-status ${state}`.trim();
@@ -97,11 +103,11 @@ function displayGallery(entries) {
 	gallery.innerHTML = sortedEntries.map((entry, index) => {
 		const title = escapeHTML(entry.title || 'Untitled NASA entry');
 		const date = escapeHTML(entry.date || '');
-		const imageUrl = getSafeUrl(entry.hdurl || entry.url);
+		const imageUrl = getSafeUrl(entry.hdurl);
 		const previewUrl = getSafeUrl(
-			entry.media_type === 'video' ? entry.thumbnail_url : entry.url
+			entry.media_type === 'video' ? entry.hdurl || entry.thumbnail_url : entry.hdurl
 		);
-		const videoUrl = getSafeUrl(entry.url);
+		const videoUrl = getSafeUrl(entry.permalink || entry.url);
 
 		const media = entry.media_type === 'video'
 			? `<a class="video-preview" href="${videoUrl}" target="_blank" rel="noopener noreferrer" aria-label="Watch video: ${title}">
@@ -127,11 +133,11 @@ function displayGallery(entries) {
 	gallery.querySelectorAll('[data-image-index]').forEach((button) => {
 		button.addEventListener('click', () => {
 			const entry = sortedEntries[Number(button.dataset.imageIndex)];
-			modalImage.src = getSafeUrl(entry.hdurl || entry.url);
+			modalImage.src = getSafeUrl(entry.hdurl);
 			modalImage.alt = entry.title || 'Astronomy picture of the day';
 			modalDate.textContent = formatDate(entry.date);
 			modalTitle.textContent = entry.title || 'Untitled NASA entry';
-			modalExplanation.textContent = entry.explanation || 'No explanation is available for this image.';
+			modalExplanation.textContent = getPlainText(entry.explanation) || 'No explanation is available for this image.';
 			photoModal.showModal();
 		});
 	});
@@ -156,8 +162,7 @@ dateForm.addEventListener('submit', async (event) => {
 	const query = new URLSearchParams({
 		api_key: apiKey,
 		start_date: startInput.value,
-		end_date: endInput.value,
-		thumbs: 'true'
+		end_date: endInput.value
 	});
 
 	submitButton.disabled = true;
@@ -175,12 +180,25 @@ dateForm.addEventListener('submit', async (event) => {
 		}
 
 		if (!Array.isArray(data) || data.length === 0) {
-			updateGalleryStatus('No space images were found for those dates.', 'error');
+			updateGalleryStatus('NASA returned no space images. Please try again later.', 'error');
 			return;
 		}
 
-		displayGallery(data);
-		updateGalleryStatus(`${data.length} space photo${data.length === 1 ? '' : 's'} found.`);
+		const selectedEntries = data.filter((entry) =>
+			entry.date >= startInput.value && entry.date <= endInput.value
+		);
+
+		if (selectedEntries.length === 0) {
+			updateGalleryStatus('NASA did not include those dates in its recent APOD response. Try a more recent 9-day range.', 'error');
+			return;
+		}
+
+		displayGallery(selectedEntries);
+		if (selectedEntries.length < dayCount) {
+			updateGalleryStatus(`NASA returned ${selectedEntries.length} of ${dayCount} APOD entries for those dates.`);
+		} else {
+			updateGalleryStatus(`${selectedEntries.length} space photos found.`);
+		}
 	} catch (error) {
 		updateGalleryStatus(`Unable to load space images: ${error.message}`, 'error');
 	} finally {
